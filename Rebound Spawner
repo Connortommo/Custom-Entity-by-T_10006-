@@ -482,7 +482,6 @@ local function DamagePlayer(entity: any)
 	end
 end
 
--- Chỉnh sửa: Chỉ lấy điểm RoomEntrance và RoomExit, bỏ qua PathfindNodes
 local function GetNodesFromRoom(room: Model, reversed: boolean): { BasePart }
 	local nodes = {}
 	local roomEntrance = room:FindFirstChild("RoomEntrance")
@@ -573,15 +572,23 @@ local function GetPathfindNodesBlitz(config: any): ({BasePart}, {BasePart})
 	return nodesToCurrent, nodesToEnd
 end
 
--- Chỉnh sửa: Hàm di chuyển bằng TweenService (1.5s, Quad InOut)
-local function EntityTweenTo(model: Model, cframe: CFrame, duration: number?)
-	duration = duration or 1.5
+-- FIX: Hàm di chuyển bằng TweenService (Tự động tính thời gian mượt mà dựa theo Tốc độ & Khoảng cách)
+local function EntityTweenTo(model: Model, cframe: CFrame, speed: number?)
+	if not model or not model.Parent then return end
+
+	speed = speed or CONST.BASE_ENTITY_SPEED
+	local currentPivot = model:GetPivot()
+	local distance = (currentPivot.Position - cframe.Position).Magnitude
+	if distance <= 0.05 then return end
+
+	local duration = distance / math.max(speed, 1)
+
 	local cframeVal = Instance.new("CFrameValue")
-	cframeVal.Value = model:GetPivot()
+	cframeVal.Value = currentPivot
 
 	local tween = TweenService:Create(
 		cframeVal,
-		TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut),
 		{ Value = cframe }
 	)
 
@@ -593,22 +600,26 @@ local function EntityTweenTo(model: Model, cframe: CFrame, duration: number?)
 
 	tween:Play()
 
-	local completed = false
-	local tweenConnection
-	tweenConnection = tween.Completed:Connect(function()
-		completed = true
-	end)
+	while (tween.PlaybackState == Enum.PlaybackState.Playing or model:GetAttribute("Paused")) do
+		if not model or not model.Parent then
+			tween:Cancel()
+			break
+		end
 
-	while not completed do
 		if model:GetAttribute("Paused") then
-			tween:Pause()
-			repeat RunService.Stepped:Wait() until not model:GetAttribute("Paused")
-			tween:Play()
+			if tween.PlaybackState == Enum.PlaybackState.Playing then
+				tween:Pause()
+			end
+			repeat
+				RunService.Stepped:Wait()
+			until not model or not model.Parent or not model:GetAttribute("Paused")
+			if model and model.Parent and not model:GetAttribute("Paused") then
+				tween:Play()
+			end
 		end
 		RunService.Stepped:Wait()
 	end
 
-	if tweenConnection then tweenConnection:Disconnect() end
 	connection:Disconnect()
 	cframeVal:Destroy()
 end
@@ -954,11 +965,13 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 	-- Pathfinding
 	task.spawn(function()
 		local reboundType = config.Rebounding.Type:upper()
+		local speed = config.Movement.Speed
+
 		if reboundType == "AMBUSH" then
 			local pathfindNodes = GetPathfindNodesAmbush(config)
 			for _, v in next, pathfindNodes do
 				local cframe = v.CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-				EntityTweenTo(model, cframe, 1.5)
+				EntityTweenTo(model, cframe, speed)
 				task.spawn(entity.RunCallback, entity, "OnReachNode", v)
 			end
 
@@ -974,7 +987,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 					for i = #pathfindNodes, 1, -1 do
 						local v = pathfindNodes[i]
 						local cframe = v.CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-						EntityTweenTo(model, cframe, 1.5)
+						EntityTweenTo(model, cframe, speed)
 						task.spawn(entity.RunCallback, entity, "OnReachNode", v)
 					end
 
@@ -987,7 +1000,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 					-- Run forwards through nodes
 					for _, v in next, pathfindNodes do
 						local cframe = v.CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-						EntityTweenTo(model, cframe, 1.5)
+						EntityTweenTo(model, cframe, speed)
 						task.spawn(entity.RunCallback, entity, "OnReachNode", v)
 					end
 
@@ -1004,7 +1017,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 
 			for _, n in next, nodesToCurrent do
 				local cframe = n.CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-				EntityTweenTo(model, cframe, 1.5)
+				EntityTweenTo(model, cframe, speed)
 				task.spawn(entity.RunCallback, entity, "OnReachNode", n)
 			end
 
@@ -1040,7 +1053,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 					local nodeIndex = tonumber(randomNode.Name)
 					for i = #roomNodes, nodeIndex, -1 do
 						local cframe = roomNodes[math.clamp(i, 1, #roomNodes)].CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-						EntityTweenTo(model, cframe, 1.5)
+						EntityTweenTo(model, cframe, speed)
 						task.spawn(entity.RunCallback, entity, "OnReachNode", roomNodes[i])
 					end
 
@@ -1050,7 +1063,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 
 					for i = nodeIndex, #roomNodes do
 						local cframe = roomNodes[math.clamp(i, 1, #roomNodes)].CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-						EntityTweenTo(model, cframe, 1.5)
+						EntityTweenTo(model, cframe, speed)
 						task.spawn(entity.RunCallback, entity, "OnReachNode", roomNodes[i])
 					end
 				end
@@ -1059,7 +1072,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 			local _, updatedToEnd = GetPathfindNodesBlitz(config)
 			for _, n in next, updatedToEnd do
 				local cframe = n.CFrame + Vector3.new(0, 3 + config.Entity.HeightOffset, 0)
-				EntityTweenTo(model, cframe, 1.5)
+				EntityTweenTo(model, cframe, speed)
 				task.spawn(entity.RunCallback, entity, "OnReachNode", n)
 			end
 		end
@@ -1068,7 +1081,7 @@ ReboundSpawnerSource.Run = function(self, entity: any, copyEntity: boolean)
 		if not model:GetAttribute("Despawning") then
 			model:SetAttribute("Despawning", true)
 			task.spawn(entity.RunCallback, entity, "OnDespawning")
-			EntityTweenTo(model, model:GetPivot() - Vector3.new(0, 300, 0), 1.5)
+			EntityTweenTo(model, model:GetPivot() - Vector3.new(0, 300, 0), 100)
 			entity:Despawn()
 		end
 	end)
